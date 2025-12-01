@@ -5,6 +5,7 @@ services:
     build: .
     ports:
       - "8080:8080"
+      - "9229:9229"
     volumes:
       - .:/app
       - /app/node_modules
@@ -15,7 +16,9 @@ services:
       - DB_PASSWORD=secret
       - DB_NAME=inventory_db
       - DB_PORT=5432
-    command: npx nodemon main.js -- --host 0.0.0.0 --port 8080 --cache ./cache
+      #command: npx nodemon main.js -- --host 0.0.0.0 --port 8080 --cache ./cache
+    command: node --inspect=0.0.0.0:9229 main.js --host 0.0.0.0 --port 8080 --cache ./cache
+ 
     depends_on:
       - db
 
