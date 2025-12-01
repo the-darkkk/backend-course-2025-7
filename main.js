@@ -1,11 +1,17 @@
-import { program } from 'commander'
-import * as fs from 'fs/promises';
+import { program } from 'commander';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
+import pg from 'pg';
+import * as fs from 'fs/promises';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const { Pool } = pg;
 
 program
   .option('-h, --host <type>', 'Server host')
@@ -16,22 +22,32 @@ program.parse(process.argv);
 const options = program.opts();
 
 if (!options.host || !options.port || !options.cache) {
-  console.error('Error : please specify the neccesary input parameters! (host, port and cache folder)');
-  process.exit(1); }
+  console.error('Error: please specify input parameters (host, port, cache)');
+  process.exit(1);
+}
+
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 5432,
+});
 
 const app = express();
 app.use(express.json());
 const cache_path = path.resolve(options.cache);
-const database_path = path.join(cache_path, 'db.json')
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const swaggerOptions = {
   definition: {
     openapi: '3.0.0',
-    info: { title: 'Inventory Service API', version: '1.0.0', description: 'Inventory Service API', },
-    servers: [ {url: '/', description: 'Current Server'} ],
-  }, apis: ['./main.js'],};
+    info: { title: 'Inventory Service API', version: '1.0.0', description: 'Inventory Service API' },
+    servers: [{ url: '/', description: 'Current Server' }],
+  },
+  apis: ['./main.js'],
+};
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
@@ -39,520 +55,271 @@ const storage = multer.diskStorage({
   destination: cache_path,
   filename: (_req, file, cb) => {
     const fileExt = path.extname(file.originalname);
-    const newName = Date.now() + fileExt; 
+    const newName = Date.now() + fileExt;
     cb(null, newName);
   }
 });
 const upload = multer({ storage: storage });
 
-app.get('/RegisterForm.html', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'RegisterForm.html')); });
+app.get('/RegisterForm.html', (_req, res) => res.sendFile(path.join(__dirname, 'RegisterForm.html')));
+app.get('/SearchForm.html', (_req, res) => res.sendFile(path.join(__dirname, 'SearchForm.html')));
 
-app.get('/SearchForm.html', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'SearchForm.html')); });
 /**
  * @swagger
  * /register:
- *   post:
- *     summary: Registers a new item to the inventory 
- *     requestBody:
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required:
- *               - inventory_name
- *             properties:
- *               inventory_name:
- *                 type: string
- *               description:
- *                 type: string
- *               photo:
- *                 type: string
- *                 format: binary
- *     responses:
- *       201:
- *         description: Item successfuly registered 
- *       500:
- *         description: Internal server error
+ * post:
+ * summary: Registers a new item
+ * requestBody:
+ * content:
+ * multipart/form-data:
+ * schema:
+ * type: object
+ * required: [inventory_name]
+ * properties:
+ * inventory_name: { type: string }
+ * description: { type: string }
+ * photo: { type: string, format: binary }
+ * responses:
+ * 201: { description: Created }
+ * 500: { description: Error }
  */
 app.post('/register', upload.single('photo'), async (req, res) => {
   try {
     const { inventory_name, description } = req.body;
-    if (!inventory_name) {
-      return res.status(400).send('Error: "inventory_name" is required.');
-    }
-    let inventory = [];
-    try {
-      const dbData = await fs.readFile(database_path, 'utf8');
-      inventory = JSON.parse(dbData);
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err; 
-    }
+    if (!inventory_name) return res.status(400).send('Error: "inventory_name" is required.');
     
-    const maxId = inventory.reduce((max, item) => Math.max(max, item.id), 0);
-    const newId = maxId + 1;
     const photoName = req.file ? req.file.filename : null;
-
-    const newItem = {
-      id: newId, 
-      name: inventory_name,
-      description: description || '',
-      photo: photoName };
-
-    inventory.push(newItem);
-    await fs.writeFile(database_path, JSON.stringify(inventory, null, 2));
-    console.log(`Registered item ${newId} with photo ${photoName}`);
-    res.status(201).json(newItem);
-
+    const query = 'INSERT INTO items (name, description, photo) VALUES ($1, $2, $3) RETURNING *';
+    const values = [inventory_name, description || '', photoName];
+    
+    const { rows } = await pool.query(query, values);
+    console.log(`Registered item ${rows[0].id}`);
+    res.status(201).json(rows[0]);
   } catch (err) {
-    console.error('Error processing /register request:', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory/{id}/photo:
- *   get:
- *     summary: Returns a photo of the item in inventory by its id 
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Photo file sent successfully
- *       404:
- *         description: Photo not found
- *       500:
- *         description: Internal server error
+ * get:
+ * summary: Returns item photo
+ * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
+ * responses: { 200: { description: OK }, 404: { description: Not Found } }
  */
 app.get('/inventory/:id/photo', async (req, res) => {
   try {
-    const requestedId = parseInt(req.params.id, 10);
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID.'); }
-    let dbData;
-    try {
-      dbData = await fs.readFile(database_path, 'utf8');
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.'); }
-      throw dbErr; }
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).send('Invalid ID');
 
-    const inventory = JSON.parse(dbData);
-    const item = inventory.find(i => i.id === requestedId);
-    if (!item) {
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    if (!item.photo) {
-      return res.status(404).send('Item has no photo.');
-    }
-    const photoPath = path.join(cache_path, item.photo);
-    
+    const { rows } = await pool.query('SELECT photo FROM items WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).send('Item not found');
+    if (!rows[0].photo) return res.status(404).send('Item has no photo');
+
+    const photoPath = path.join(cache_path, rows[0].photo);
     res.sendFile(photoPath, (err) => {
-      if (err) {
-        if (err.code === 'ENOENT') {
-          res.status(404).send('Photo file not found on disk.');
-        } else {
-          console.error('Error sending file:', err);
-          res.status(500).send('Server error sending file.');
-        }
-      }
+      if (err) res.status(404).send('Photo file not found on disk');
     });
   } catch (err) {
-    console.error('Error processing /inventory/:id/photo', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory:
- *   get:
- *     summary: Returns full inventory JSON file 
- *     responses:
- *       200:
- *         description: Inventory JSON sent successfully
- *       404:
- *         description: Inventory not found
- *       500:
- *         description: Internal server error
+ * get:
+ * summary: Returns full inventory
+ * responses: { 200: { description: OK } }
  */
 app.get('/inventory', async (_req, res) => {
   try {
-    const dbData = await fs.readFile(database_path, 'utf8');
-    const inventory = JSON.parse(dbData);
-    const inventoryWithUrls = inventory.map(item => {
-      const { photo, ...rest } = item;
-      if (photo) {
-        return {
-          ...rest,
-          photo_url: `/inventory/${item.id}/photo`
-        };
-      }
-      return rest;
-    });
-    res.json(inventoryWithUrls);
-
+    const { rows } = await pool.query('SELECT * FROM items ORDER BY id ASC');
+    const result = rows.map(item => ({
+      ...item,
+      photo_url: item.photo ? `/inventory/${item.id}/photo` : undefined
+    }));
+    res.json(result);
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      res.status(404).send('Inventory database not found.');
-    } else {
-      console.error('Error reading db.json:', err);
-      res.status(500).send('Server Error');
-    }
+    console.error(err);
+    res.status(500).send('Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory/{id}:
- *   get:   
- *     summary: Returns item details by id 
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Item details successfully sent
- *       404:
- *         description: Item not found
- *       500:
- *         description: Internal server error
+ * get:
+ * summary: Returns item details
+ * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
+ * responses: { 200: { description: OK }, 404: { description: Not Found } }
  */
 app.get('/inventory/:id', async (req, res) => {
   try {
-    const requestedId = parseInt(req.params.id, 10);
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID. Must be a number.');
-    }
-    let dbData;
-    try {
-      dbData = await fs.readFile(database_path, 'utf8');
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.');
-      }
-      throw dbErr;
-    }
-    const inventory = JSON.parse(dbData);
-    const item = inventory.find(i => i.id === requestedId);
-    if (!item) {
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    const { photo, ...rest } = item;
-    let itemResponse;
-    if (photo) {
-      itemResponse = {
-        ...rest,
-        photo_url: `/inventory/${item.id}/photo`
-      };
-    } else {
-      itemResponse = rest;
-    }
-    res.json(itemResponse);
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).send('Invalid ID');
+
+    const { rows } = await pool.query('SELECT * FROM items WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).send('Item not found');
+
+    const item = rows[0];
+    const response = { ...item, photo_url: item.photo ? `/inventory/${item.id}/photo` : undefined };
+    res.json(response);
   } catch (err) {
-    console.error('Error processing /inventory/:id', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory/{id}:
- *   put:
- *     summary: Updates item name and/or description by id 
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     requestBody:
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               description:
- *                 type: string
- *     responses:
- *       200:
- *         description: Item successfully updated
- *       400:
- *         description: ID in the request is not a valid number
- *       404:
- *         description: Item to update was not found
- *       500:
- *         description: Internal server error
+ * put:
+ * summary: Updates item
+ * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
+ * requestBody:
+ * content:
+ * application/json:
+ * schema: { type: object, properties: { name: { type: string }, description: { type: string } } }
+ * responses: { 200: { description: OK } }
  */
 app.put('/inventory/:id', async (req, res) => {
   try {
-    const requestedId = parseInt(req.params.id, 10);
+    const id = parseInt(req.params.id, 10);
     const { name, description } = req.body;
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID.');
-    }
-    let inventory;
-    try {
-      const dbData = await fs.readFile(database_path, 'utf8');
-      inventory = JSON.parse(dbData);
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.');
-      }
-      throw dbErr;
-    }
-    const itemIndex = inventory.findIndex(i => i.id === requestedId);
-    if (itemIndex === -1) {
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    const item = inventory[itemIndex];
-    if (name !== undefined) {
-      item.name = name;
-    }
-    if (description !== undefined) {
-      item.description = description;
-    }
+    if (isNaN(id)) return res.status(400).send('Invalid ID');
 
-    await fs.writeFile(database_path, JSON.stringify(inventory, null, 2));
-    const { photo, ...rest } = item;
-    const responseItem = { ...rest };
-    if (photo) {
-      responseItem.photo_url = `/inventory/${item.id}/photo`;
-    }
-    res.json(responseItem);
+    const check = await pool.query('SELECT * FROM items WHERE id = $1', [id]);
+    if (check.rows.length === 0) return res.status(404).send('Item not found');
 
+    const current = check.rows[0];
+    const newName = name !== undefined ? name : current.name;
+    const newDesc = description !== undefined ? description : current.description;
+
+    const { rows } = await pool.query(
+      'UPDATE items SET name = $1, description = $2 WHERE id = $3 RETURNING *',
+      [newName, newDesc, id]
+    );
+
+    const item = rows[0];
+    res.json({ ...item, photo_url: item.photo ? `/inventory/${item.id}/photo` : undefined });
   } catch (err) {
-    console.error('Error processing PUT /inventory/:id', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory/{id}/photo:
- *   put:
- *     summary: Updates item photo by id 
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     requestBody:
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required:
- *               - photo
- *             properties:
- *               photo:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Photo successfully updated
- *       400:
- *         description: ID in the request is not a valid number or no photo file was uploaded
- *       404:
- *         description: Item to update photo was not found
- *       500:
- *         description: Internal server error
+ * put:
+ * summary: Updates item photo
+ * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
+ * requestBody:
+ * content:
+ * multipart/form-data:
+ * schema: { type: object, required: [photo], properties: { photo: { type: string, format: binary } } }
+ * responses: { 200: { description: OK } }
  */
 app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
   try {
-    const requestedId = parseInt(req.params.id, 10);
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID.');
-    }
-    if (!req.file) {
-      return res.status(400).send('No photo file uploaded.');
-    }
-    let inventory;
-    try {
-      const dbData = await fs.readFile(database_path, 'utf8');
-      inventory = JSON.parse(dbData);
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.');
-      }
-      throw dbErr;
-    }
-    const itemIndex = inventory.findIndex(i => i.id === requestedId);
-    if (itemIndex === -1) {
-      await fs.unlink(req.file.path); 
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    const oldPhotoName = inventory[itemIndex].photo;
-    if (oldPhotoName) {
-      try {
-        await fs.unlink(path.join(cache_path, oldPhotoName));
-      } catch (unlinkErr) {
-        console.warn(`Could not delete old photo: ${oldPhotoName}`, unlinkErr.message);
-      }
-    }
-    inventory[itemIndex].photo = req.file.filename;
-    await fs.writeFile(database_path, JSON.stringify(inventory, null, 2));
-    res.status(200).send('Photo updated successfully.');
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).send('Invalid ID');
+    if (!req.file) return res.status(400).send('No photo uploaded');
 
+    const { rows } = await pool.query('SELECT photo FROM items WHERE id = $1', [id]);
+    if (rows.length === 0) {
+      await fs.unlink(req.file.path);
+      return res.status(404).send('Item not found');
+    }
+
+    const oldPhoto = rows[0].photo;
+    if (oldPhoto) {
+      try { await fs.unlink(path.join(cache_path, oldPhoto)); } catch (e) {}
+    }
+
+    await pool.query('UPDATE items SET photo = $1 WHERE id = $2', [req.file.filename, id]);
+    res.status(200).send('Photo updated');
   } catch (err) {
-    console.error('Error processing PUT /inventory/:id/photo', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /inventory/{id}:
- *   delete:
- *     summary: Deletes item from database by id 
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Item successfully deleted 
- *       400:
- *         description: ID in the request is not a valid number
- *       404:
- *         description: Item to delete was not found
- *       500:
- *         description: Internal server error
+ * delete:
+ * summary: Deletes item
+ * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
+ * responses: { 200: { description: OK } }
  */
 app.delete('/inventory/:id', async (req, res) => {
   try {
-    const requestedId = parseInt(req.params.id, 10);
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID.');
-    }
-    
-    let inventory;
-    try {
-      const dbData = await fs.readFile(database_path, 'utf8');
-      inventory = JSON.parse(dbData);
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.');
-      }
-      throw dbErr;
-    }
-    const itemIndex = inventory.findIndex(i => i.id === requestedId);
-    if (itemIndex === -1) {
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    const itemToDelete = inventory[itemIndex];
-    inventory.splice(itemIndex, 1);
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).send('Invalid ID');
 
-    await fs.writeFile(database_path, JSON.stringify(inventory, null, 2));
-    if (itemToDelete.photo) {
-      try {
-        await fs.unlink(path.join(cache_path, itemToDelete.photo));
-      } catch (unlinkErr) {
-        console.warn(`Could not delete photo: ${itemToDelete.photo}`, unlinkErr.message);
-      }
-    }
-    res.status(200).send('Item deleted successfully.');
+    const { rows } = await pool.query('DELETE FROM items WHERE id = $1 RETURNING photo', [id]);
+    if (rows.length === 0) return res.status(404).send('Item not found');
 
+    if (rows[0].photo) {
+      try { await fs.unlink(path.join(cache_path, rows[0].photo)); } catch (e) {}
+    }
+    res.status(200).send('Item deleted');
   } catch (err) {
-    console.error('Error processing DELETE /inventory/:id', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
+
 /**
  * @swagger
  * /search:
- *   get:
- *     summary: Searches item in database by id 
- *     requestBody:
- *       content:
- *         application/x-www-form-urlencoded:
- *           schema:
- *             type: object
- *             required:
- *               - id
- *             properties:
- *               id:
- *                 type: integer
- *               has_photo:
- *                 type: string
- *     responses:
- *       200:
- *         description: Successfully sent search result 
- *       400:
- *         description: ID in the request is not a valid number
- *       404:
- *         description: Item to was not found
- *       500:
- *         description: Internal server error
+ * get:
+ * summary: Search item
+ * parameters:
+ * - in: query
+ * name: id
+ * required: true
+ * - in: query
+ * name: includePhoto
+ * responses: { 200: { description: OK } }
  */
 app.get('/search', async (req, res) => {
   try {
     const { id, includePhoto } = req.query;
-    if (!id) {
-      return res.status(400).send('Search ID is required.');
-    }
+    if (!id) return res.status(400).send('Search ID required');
     const requestedId = parseInt(id, 10);
-    if (isNaN(requestedId)) {
-      return res.status(400).send('Invalid ID. Must be a number.');
-    }
-    let inventory;
-    try {
-      const dbData = await fs.readFile(database_path, 'utf8');
-      inventory = JSON.parse(dbData);
-    } catch (dbErr) {
-      if (dbErr.code === 'ENOENT') {
-        return res.status(404).send('Inventory database not found.');
-      }
-      throw dbErr;
-    }
-    const item = inventory.find(i => i.id === requestedId);
-    if (!item) {
-      return res.status(404).send(`Item with ID ${requestedId} not found.`);
-    }
-    const { photo, ...rest } = item;
-    const itemResponse = { ...rest }; 
-    const shouldIncludePhoto = (includePhoto === 'on');
-    
-    if (shouldIncludePhoto && photo) {
-      itemResponse.photo_url = `/inventory/${item.id}/photo`;
-    }
-    res.json(itemResponse);
+    if (isNaN(requestedId)) return res.status(400).send('Invalid ID');
 
+    const { rows } = await pool.query('SELECT * FROM items WHERE id = $1', [requestedId]);
+    if (rows.length === 0) return res.status(404).send('Item not found');
+
+    const item = rows[0];
+    const response = { ...item };
+    if (includePhoto === 'on' && item.photo) {
+      response.photo_url = `/inventory/${item.id}/photo`;
+    }
+    res.json(response);
   } catch (err) {
-    console.error('Error processing /search', err);
+    console.error(err);
     res.status(500).send('Internal Server Error');
   }
 });
 
-app.all('/inventory/:id/photo', (_req, res) => {
-  res.status(405).send('Method Not Allowed');
-});
-
-app.all('/inventory/:id', (_req, res) => {
-  res.status(405).send('Method Not Allowed');
-});
-
-app.all('/inventory', (_req, res) => {
-  res.status(405).send('Method Not Allowed');
-});
+app.all('*', (_req, res) => res.status(405).send('Method Not Allowed'));
 
 (async () => {
   try {
     await fs.mkdir(cache_path, { recursive: true });
-    console.log('Cache folder directory', cache_path);
     app.listen(options.port, options.host, () => {
       console.log(`Server started on http://${options.host}:${options.port}`);
     });
   } catch (err) {
-    console.error('Error :', err.message);
+    console.error('Error:', err.message);
     process.exit(1);
   }
 })();
