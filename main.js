@@ -67,21 +67,28 @@ app.get('/SearchForm.html', (_req, res) => res.sendFile(path.join(__dirname, 'Se
 /**
  * @swagger
  * /register:
- * post:
- * summary: Registers a new item
- * requestBody:
- * content:
- * multipart/form-data:
- * schema:
- * type: object
- * required: [inventory_name]
- * properties:
- * inventory_name: { type: string }
- * description: { type: string }
- * photo: { type: string, format: binary }
- * responses:
- * 201: { description: Created }
- * 500: { description: Error }
+ *   post:
+ *     summary: Registers a new item to the inventory 
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - inventory_name
+ *             properties:
+ *               inventory_name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               photo:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       201:
+ *         description: Item successfuly registered 
+ *       500:
+ *         description: Internal server error
  */
 app.post('/register', upload.single('photo'), async (req, res) => {
   try {
@@ -104,10 +111,21 @@ app.post('/register', upload.single('photo'), async (req, res) => {
 /**
  * @swagger
  * /inventory/{id}/photo:
- * get:
- * summary: Returns item photo
- * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
- * responses: { 200: { description: OK }, 404: { description: Not Found } }
+ *   get:
+ *     summary: Returns a photo of the item in inventory by its id 
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Photo file sent successfully
+ *       404:
+ *         description: Photo not found
+ *       500:
+ *         description: Internal server error
  */
 app.get('/inventory/:id/photo', async (req, res) => {
   try {
@@ -131,9 +149,15 @@ app.get('/inventory/:id/photo', async (req, res) => {
 /**
  * @swagger
  * /inventory:
- * get:
- * summary: Returns full inventory
- * responses: { 200: { description: OK } }
+ *   get:
+ *     summary: Returns full inventory JSON file 
+ *     responses:
+ *       200:
+ *         description: Inventory JSON sent successfully
+ *       404:
+ *         description: Inventory not found
+ *       500:
+ *         description: Internal server error
  */
 app.get('/inventory', async (_req, res) => {
   try {
@@ -152,10 +176,21 @@ app.get('/inventory', async (_req, res) => {
 /**
  * @swagger
  * /inventory/{id}:
- * get:
- * summary: Returns item details
- * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
- * responses: { 200: { description: OK }, 404: { description: Not Found } }
+ *   get:   
+ *     summary: Returns item details by id 
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Item details successfully sent
+ *       404:
+ *         description: Item not found
+ *       500:
+ *         description: Internal server error
  */
 app.get('/inventory/:id', async (req, res) => {
   try {
@@ -177,14 +212,33 @@ app.get('/inventory/:id', async (req, res) => {
 /**
  * @swagger
  * /inventory/{id}:
- * put:
- * summary: Updates item
- * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
- * requestBody:
- * content:
- * application/json:
- * schema: { type: object, properties: { name: { type: string }, description: { type: string } } }
- * responses: { 200: { description: OK } }
+ *   put:
+ *     summary: Updates item name and/or description by id 
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Item successfully updated
+ *       400:
+ *         description: ID in the request is not a valid number
+ *       404:
+ *         description: Item to update was not found
+ *       500:
+ *         description: Internal server error
  */
 app.put('/inventory/:id', async (req, res) => {
   try {
@@ -215,14 +269,34 @@ app.put('/inventory/:id', async (req, res) => {
 /**
  * @swagger
  * /inventory/{id}/photo:
- * put:
- * summary: Updates item photo
- * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
- * requestBody:
- * content:
- * multipart/form-data:
- * schema: { type: object, required: [photo], properties: { photo: { type: string, format: binary } } }
- * responses: { 200: { description: OK } }
+ *   put:
+ *     summary: Updates item photo by id 
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - photo
+ *             properties:
+ *               photo:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Photo successfully updated
+ *       400:
+ *         description: ID in the request is not a valid number or no photo file was uploaded
+ *       404:
+ *         description: Item to update photo was not found
+ *       500:
+ *         description: Internal server error
  */
 app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
   try {
@@ -252,10 +326,23 @@ app.put('/inventory/:id/photo', upload.single('photo'), async (req, res) => {
 /**
  * @swagger
  * /inventory/{id}:
- * delete:
- * summary: Deletes item
- * parameters: [{ in: path, name: id, schema: { type: integer }, required: true }]
- * responses: { 200: { description: OK } }
+ *   delete:
+ *     summary: Deletes item from database by id 
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Item successfully deleted 
+ *       400:
+ *         description: ID in the request is not a valid number
+ *       404:
+ *         description: Item to delete was not found
+ *       500:
+ *         description: Internal server error
  */
 app.delete('/inventory/:id', async (req, res) => {
   try {
@@ -278,15 +365,29 @@ app.delete('/inventory/:id', async (req, res) => {
 /**
  * @swagger
  * /search:
- * get:
- * summary: Search item
- * parameters:
- * - in: query
- * name: id
- * required: true
- * - in: query
- * name: includePhoto
- * responses: { 200: { description: OK } }
+ *   get:
+ *     summary: Searches item in database by id 
+ *     requestBody:
+ *       content:
+ *         application/x-www-form-urlencoded:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - id
+ *             properties:
+ *               id:
+ *                 type: integer
+ *               has_photo:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Successfully sent search result 
+ *       400:
+ *         description: ID in the request is not a valid number
+ *       404:
+ *         description: Item to was not found
+ *       500:
+ *         description: Internal server error
  */
 app.get('/search', async (req, res) => {
   try {
@@ -310,7 +411,7 @@ app.get('/search', async (req, res) => {
   }
 });
 
-app.all('*', (_req, res) => res.status(405).send('Method Not Allowed'));
+app.all(/(.*)/, (_req, res) => res.status(405).send('Method Not Allowed'));
 
 (async () => {
   try {
