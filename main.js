@@ -21,11 +21,11 @@ program
 program.parse(process.argv);
 const options = program.opts();
 
-if (!options.host || !options.port || !options.cache) {
-  console.error('Error: please specify input parameters (host, port, cache)');
-  process.exit(1);
-}
+const HOST = options.host || process.env.SERVER_HOST || '0.0.0.0';
+const PORT = options.port || process.env.SERVER_PORT || 8080;
+const CACHE_DIR = options.cache || process.env.CACHE_PATH || './cache';
 
+console.log(`Config: Host=${HOST}, Port=${PORT}, Cache=${CACHE_DIR}`);
 const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -36,7 +36,8 @@ const pool = new Pool({
 
 const app = express();
 app.use(express.json());
-const cache_path = path.resolve(options.cache);
+
+const cache_path = path.resolve(CACHE_DIR);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -416,8 +417,8 @@ app.all(/(.*)/, (_req, res) => res.status(405).send('Method Not Allowed'));
 (async () => {
   try {
     await fs.mkdir(cache_path, { recursive: true });
-    app.listen(options.port, options.host, () => {
-      console.log(`Server started on http://${options.host}:${options.port}`);
+    app.listen(PORT, HOST, () => {
+      console.log(`Server started on http://${HOST}:${PORT}`);
     });
   } catch (err) {
     console.error('Error:', err.message);
